@@ -6,23 +6,25 @@ import bcrypt from 'bcrypt';
 import { v4 as uuidv4 } from 'uuid';
 import ExcelJS from 'exceljs';
 import PDFDocument from 'pdfkit';
-import db from './db.js';
+import {
+  confirmAlert,
+  countFila,
+  createUser,
+  ensureSettings,
+  getSettings,
+  getUser,
+  initDb,
+  insertAudit,
+  listAlerts,
+  listHealth,
+  listHistory,
+  listVehicles,
+  setSettings
+} from './db.js';
 import { startQueue } from './worker.js';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-
-const insertUser = db.prepare('INSERT INTO users (id, username, password_hash, created_at) VALUES (@id, @username, @password_hash, @created_at)');
-const findUser = db.prepare('SELECT * FROM users WHERE username = ?');
-const insertAudit = db.prepare('INSERT INTO audit_logs (id, username, action, created_at, metadata) VALUES (@id, @username, @action, @created_at, @metadata)');
-const listVehicles = db.prepare('SELECT * FROM vehicles ORDER BY last_seen_at DESC');
-const listAlerts = db.prepare('SELECT * FROM alerts ORDER BY called_at DESC');
-const listHistory = db.prepare('SELECT * FROM status_history ORDER BY observed_at DESC LIMIT 200');
-const countFila = db.prepare("SELECT COUNT(*) as total FROM vehicles WHERE status = 'FILA'");
-const updateAlertConfirm = db.prepare('UPDATE alerts SET confirmed_by = ?, confirmed_at = ? WHERE id = ?');
-const selectSettings = db.prepare('SELECT key, value FROM settings');
-const upsertSetting = db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value');
-const listHealth = db.prepare('SELECT * FROM monitoring_health ORDER BY id DESC LIMIT 20');
 
 const sessionSecret = process.env.SESSION_SECRET || 'monitor-secret';
 
@@ -69,12 +71,12 @@ function requireAuth(req, res, next) {
   return next();
 }
 
-function ensureAdmin() {
-  const existing = findUser.get('admin');
+async function ensureAdmin() {
+  const existing = await getUser('admin');
   if (!existing) {
     const password = process.env.ADMIN_PASSWORD || 'admin123';
     const hash = bcrypt.hashSync(password, 10);
-    insertUser.run({
+    await createUser({
       id: uuidv4(),
       username: 'admin',
       password_hash: hash,
@@ -83,21 +85,16 @@ function ensureAdmin() {
   }
 }
 
-function ensureSettings() {
-  const defaults = {
-    monitor_interval_ms: '10000',
-    monitor_url: 'https://agendeam.com.br/ujf/motorista.php',
-    target_carrier: 'TRANSPORTADORA SEIS',
-    alert_volume: '1'
-  };
-  Object.entries(defaults).forEach(([key, value]) => {
-    upsertSetting.run(key, value);
-  });
-}
+const settingsDefaults = {
+  monitor_interval_ms: '10000',
+  monitor_url: 'https://agendeam.com.br/ujf/motorista.php',
+  target_carrier: 'TRANSPORTADORA SEIS',
+  alert_volume: '1'
+};
 
-app.post('/api/login', (req, res) => {
+app.post('/api/login', async (req, res) => {
   const { username, password } = req.body;
-  const user = findUser.get(username);
+  const user = await getUser(username);
   if (!user) {
     return res.status(401).json({ error: 'Credenciais inválidas' });
   }
@@ -106,7 +103,7 @@ app.post('/api/login', (req, res) => {
     return res.status(401).json({ error: 'Credenciais inválidas' });
   }
   req.session.user = { username: user.username };
-  insertAudit.run({
+  await insertAudit({
     id: uuidv4(),
     username: user.username,
     action: 'login',
@@ -116,8 +113,8 @@ app.post('/api/login', (req, res) => {
   return res.json({ ok: true, username: user.username });
 });
 
-app.post('/api/logout', requireAuth, (req, res) => {
-  insertAudit.run({
+app.post('/api/logout', requireAuth, async (req, res) => {
+  await insertAudit({
     id: uuidv4(),
     username: req.session.user.username,
     action: 'logout',
@@ -136,22 +133,22 @@ app.get('/api/session', (req, res) => {
   return res.json({ username: req.session.user.username });
 });
 
-app.get('/api/vehicles', requireAuth, (req, res) => {
-  res.json(listVehicles.all());
+app.get('/api/vehicles', requireAuth, async (req, res) => {
+  res.json(await listVehicles());
 });
 
-app.get('/api/history', requireAuth, (req, res) => {
-  res.json(listHistory.all());
+app.get('/api/history', requireAuth, async (req, res) => {
+  res.json(await listHistory());
 });
 
-app.get('/api/alerts', requireAuth, (req, res) => {
-  res.json(listAlerts.all());
+app.get('/api/alerts', requireAuth, async (req, res) => {
+  res.json(await listAlerts());
 });
 
-app.post('/api/alerts/:id/confirm', requireAuth, (req, res) => {
+app.post('/api/alerts/:id/confirm', requireAuth, async (req, res) => {
   const now = new Date().toISOString();
-  updateAlertConfirm.run(req.session.user.username, now, req.params.id);
-  insertAudit.run({
+  await confirmAlert(req.params.id, req.session.user.username, now);
+  await insertAudit({
     id: uuidv4(),
     username: req.session.user.username,
     action: 'confirm_alert',
@@ -161,39 +158,36 @@ app.post('/api/alerts/:id/confirm', requireAuth, (req, res) => {
   res.json({ ok: true, confirmed_at: now });
 });
 
-app.get('/api/counts', requireAuth, (req, res) => {
-  res.json({ fila: countFila.get().total });
+app.get('/api/counts', requireAuth, async (req, res) => {
+  res.json({ fila: await countFila() });
 });
 
-app.get('/api/settings', requireAuth, (req, res) => {
-  const settings = {};
-  selectSettings.all().forEach((row) => {
-    settings[row.key] = row.value;
-  });
-  res.json(settings);
+app.get('/api/settings', requireAuth, async (req, res) => {
+  res.json(await getSettings());
 });
 
-app.post('/api/settings', requireAuth, (req, res) => {
-  Object.entries(req.body).forEach(([key, value]) => {
-    upsertSetting.run(key, String(value));
-  });
-  insertAudit.run({
+app.post('/api/settings', requireAuth, async (req, res) => {
+  const payload = Object.fromEntries(
+    Object.entries(req.body).map(([key, value]) => [key, String(value)])
+  );
+  await setSettings(payload);
+  await insertAudit({
     id: uuidv4(),
     username: req.session.user.username,
     action: 'update_settings',
     created_at: new Date().toISOString(),
-    metadata: JSON.stringify(req.body)
+    metadata: JSON.stringify(payload)
   });
   res.json({ ok: true });
 });
 
-app.get('/api/health', requireAuth, (req, res) => {
-  res.json(listHealth.all());
+app.get('/api/health', requireAuth, async (req, res) => {
+  res.json(await listHealth());
 });
 
 app.get('/api/alerts/export', requireAuth, async (req, res) => {
   const format = (req.query.format || 'csv').toLowerCase();
-  const alerts = listAlerts.all();
+  const alerts = await listAlerts();
 
   if (format === 'xlsx') {
     const workbook = new ExcelJS.Workbook();
@@ -261,8 +255,9 @@ app.get('/api/events', requireAuth, (req, res) => {
 
 app.use(express.static('public'));
 
-ensureAdmin();
-ensureSettings();
+await initDb();
+await ensureAdmin();
+await ensureSettings(settingsDefaults);
 
 app.locals.clients = new Set();
 

@@ -1,37 +1,20 @@
 import fetch from 'node-fetch';
 import cheerio from 'cheerio';
 import { v4 as uuidv4 } from 'uuid';
-import db from './db.js';
+import {
+  getSettings,
+  getVehicleByPlate,
+  insertAlert,
+  insertHealth,
+  insertHistory,
+  upsertVehicle
+} from './db.js';
 
 const DEFAULT_URL = 'https://agendeam.com.br/ujf/motorista.php';
 
-const upsertVehicle = db.prepare(`
-  INSERT INTO vehicles (id, plate, carrier, status, last_seen_at)
-  VALUES (@id, @plate, @carrier, @status, @last_seen_at)
-  ON CONFLICT(id) DO UPDATE SET
-    status=excluded.status,
-    carrier=excluded.carrier,
-    last_seen_at=excluded.last_seen_at
-`);
-
-const insertHistory = db.prepare(
-  'INSERT INTO status_history (id, vehicle_id, status, observed_at) VALUES (@id, @vehicle_id, @status, @observed_at)'
-);
-
-const insertAlert = db.prepare(
-  'INSERT INTO alerts (id, vehicle_id, carrier, status, called_at) VALUES (@id, @vehicle_id, @carrier, @status, @called_at)'
-);
-
-const insertHealth = db.prepare(
-  'INSERT INTO monitoring_health (cycle_started_at, cycle_finished_at, status, response_time_ms, error_message) VALUES (@cycle_started_at, @cycle_finished_at, @status, @response_time_ms, @error_message)'
-);
-
-const selectVehicle = db.prepare('SELECT * FROM vehicles WHERE plate = ?');
-const selectSetting = db.prepare('SELECT value FROM settings WHERE key = ?');
-
-function getSetting(key, fallback) {
-  const row = selectSetting.get(key);
-  return row ? row.value : fallback;
+async function getSetting(key, fallback) {
+  const settings = await getSettings();
+  return settings?.[key] ?? fallback;
 }
 
 function normalizeCell(value) {
@@ -64,7 +47,8 @@ export async function runMonitoringCycle({ onEvents }) {
   };
 
   try {
-    const response = await fetch(getSetting('monitor_url', DEFAULT_URL), {
+    const monitorUrl = await getSetting('monitor_url', DEFAULT_URL);
+    const response = await fetch(monitorUrl, {
       headers: { 'User-Agent': 'monitor-2026/1.0' }
     });
     const html = await response.text();
@@ -72,17 +56,17 @@ export async function runMonitoringCycle({ onEvents }) {
     const now = new Date().toISOString();
 
     const events = [];
-    rows.forEach((row) => {
-      const existing = selectVehicle.get(row.plate);
+    for (const row of rows) {
+      const existing = await getVehicleByPlate(row.plate);
       const vehicleId = existing?.id ?? uuidv4();
-      upsertVehicle.run({
+      await upsertVehicle({
         id: vehicleId,
         plate: row.plate,
         carrier: row.carrier,
         status: row.status,
         last_seen_at: now
       });
-      insertHistory.run({
+      await insertHistory({
         id: uuidv4(),
         vehicle_id: vehicleId,
         status: row.status,
@@ -91,7 +75,7 @@ export async function runMonitoringCycle({ onEvents }) {
 
       if (row.status.toUpperCase() === 'CHAMADO DA PORTARIA') {
         const alertId = uuidv4();
-        insertAlert.run({
+        await insertAlert({
           id: alertId,
           vehicle_id: vehicleId,
           carrier: row.carrier,
@@ -118,12 +102,12 @@ export async function runMonitoringCycle({ onEvents }) {
           observed_at: now
         });
       }
-    });
+    }
 
     healthRecord.status = 'success';
     healthRecord.cycle_finished_at = new Date().toISOString();
     healthRecord.response_time_ms = new Date(healthRecord.cycle_finished_at) - start;
-    insertHealth.run(healthRecord);
+    await insertHealth(healthRecord);
 
     if (events.length) {
       onEvents(events);
@@ -133,7 +117,7 @@ export async function runMonitoringCycle({ onEvents }) {
     healthRecord.cycle_finished_at = new Date().toISOString();
     healthRecord.response_time_ms = new Date(healthRecord.cycle_finished_at) - start;
     healthRecord.error_message = error.message;
-    insertHealth.run(healthRecord);
+    await insertHealth(healthRecord);
     onEvents([{ type: 'monitoring_error', message: error.message }]);
   }
 }
@@ -147,7 +131,9 @@ export function startQueue({ onEvents }) {
     running = false;
   }
 
-  const intervalMs = Number(getSetting('monitor_interval_ms', '10000'));
-  cycle();
-  return setInterval(cycle, intervalMs);
+  (async () => {
+    const intervalMs = Number(await getSetting('monitor_interval_ms', '10000'));
+    cycle();
+    setInterval(cycle, intervalMs);
+  })();
 }
