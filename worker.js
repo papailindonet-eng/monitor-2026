@@ -1,5 +1,5 @@
 import fetch from 'node-fetch';
-import cheerio from 'cheerio';
+import * as cheerio from 'cheerio';
 import { v4 as uuidv4 } from 'uuid';
 import {
   getSettings,
