@@ -2,7 +2,6 @@ import { Low } from 'lowdb';
 import { JSONFile } from 'lowdb/node';
 
 const adapter = new JSONFile('monitor.json');
-const db = new Low(adapter);
 
 const defaultData = {
   users: [],
@@ -13,6 +12,8 @@ const defaultData = {
   monitoring_health: [],
   audit_logs: []
 };
+
+const db = new Low(adapter, defaultData);
 
 function ensureData() {
   if (!db.data) {
