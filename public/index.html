@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Monitor 2026</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div id="login-screen" class="login-screen">
+    <div class="login-card">
+      <h1>Monitor 2026</h1>
+      <p>Acesso restrito</p>
+      <form id="login-form">
+        <input type="text" name="username" placeholder="Usuário" required />
+        <input type="password" name="password" placeholder="Senha" required />
+        <button type="submit">Entrar</button>
+        <span id="login-error" class="error"></span>
+      </form>
+    </div>
+  </div>
+
+  <div id="app" class="app hidden">
+    <aside class="sidebar">
+      <div class="logo">Monitor 2026</div>
+      <nav>
+        <button class="tab active" data-tab="dashboard">Painel Geral</button>
+        <button class="tab" data-tab="realtime">Monitoramento em Tempo Real</button>
+        <button class="tab" data-tab="calls">Chamados da Portaria</button>
+        <button class="tab" data-tab="history">Histórico de Chamados</button>
+        <button class="tab" data-tab="reports">Relatórios</button>
+        <button class="tab" data-tab="settings">Configurações</button>
+      </nav>
+      <div class="sidebar-footer">
+        <button id="logout">Sair</button>
+      </div>
+    </aside>
+
+    <main>
+      <header class="topbar">
+        <div>
+          <h2 id="tab-title">Painel Geral</h2>
+          <p id="tab-subtitle">Monitoramento ativo em tempo real</p>
+        </div>
+        <div class="status-pill" id="health-status">ONLINE</div>
+      </header>
+
+      <section id="dashboard" class="tab-content active">
+        <div class="cards">
+          <div class="card">
+            <h3>Veículos em FILA</h3>
+            <span id="fila-count" class="big-number">0</span>
+          </div>
+          <div class="card">
+            <h3>Último ciclo</h3>
+            <span id="last-cycle" class="big-number">-</span>
+          </div>
+          <div class="card">
+            <h3>Falhas recentes</h3>
+            <span id="failure-count" class="big-number">0</span>
+          </div>
+        </div>
+        <div class="grid">
+          <div class="panel">
+            <h3>Veículos monitorados</h3>
+            <table>
+              <thead>
+                <tr>
+                  <th>Placa</th>
+                  <th>Transportadora</th>
+                  <th>Status</th>
+                  <th>Última leitura</th>
+                </tr>
+              </thead>
+              <tbody id="vehicles-table"></tbody>
+            </table>
+          </div>
+          <div class="panel">
+            <h3>Indicadores rápidos</h3>
+            <div class="metrics" id="metrics"></div>
+          </div>
+        </div>
+      </section>
+
+      <section id="realtime" class="tab-content">
+        <div class="panel">
+          <h3>Eventos em tempo real</h3>
+          <ul id="realtime-events" class="event-list"></ul>
+        </div>
+      </section>
+
+      <section id="calls" class="tab-content">
+        <div class="panel">
+          <div class="panel-header">
+            <h3>Chamados da Portaria</h3>
+            <div>
+              <button class="button" data-export="csv">Exportar CSV</button>
+              <button class="button" data-export="xlsx">Exportar Excel</button>
+              <button class="button" data-export="pdf">Exportar PDF</button>
+            </div>
+          </div>
+          <div class="filters">
+            <label>
+              Buscar
+              <input type="text" id="alert-search" placeholder="Placa, transportadora ou status" />
+            </label>
+            <label>
+              Data inicial
+              <input type="date" id="alert-start" />
+            </label>
+            <label>
+              Data final
+              <input type="date" id="alert-end" />
+            </label>
+            <label>
+              Transportadora
+              <input type="text" id="alert-carrier" placeholder="Ex: TRANSPORTADORA SEIS" />
+            </label>
+            <label>
+              Status
+              <input type="text" id="alert-status" placeholder="Ex: CHAMADO DA PORTARIA" />
+            </label>
+            <label>
+              Ordenação
+              <select id="alert-sort">
+                <option value="desc">Mais recente</option>
+                <option value="asc">Mais antigo</option>
+              </select>
+            </label>
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th>Veículo</th>
+                <th>Transportadora</th>
+                <th>Status</th>
+                <th>Chamado em</th>
+                <th>Confirmado por</th>
+                <th>Confirmado em</th>
+              </tr>
+            </thead>
+            <tbody id="alerts-table"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="history" class="tab-content">
+        <div class="panel">
+          <h3>Histórico recente</h3>
+          <ul id="history-list" class="event-list"></ul>
+        </div>
+      </section>
+
+      <section id="reports" class="tab-content">
+        <div class="grid">
+          <div class="panel">
+            <h3>Chamados por transportadora</h3>
+            <div id="report-carrier" class="metrics"></div>
+          </div>
+          <div class="panel">
+            <h3>Chamados por hora</h3>
+            <div id="report-hour" class="metrics"></div>
+          </div>
+        </div>
+      </section>
+
+      <section id="settings" class="tab-content">
+        <div class="panel">
+          <h3>Configurações</h3>
+          <form id="settings-form" class="settings-form">
+            <label>
+              Frequência (ms)
+              <input type="number" name="monitor_interval_ms" min="5000" value="10000" />
+            </label>
+            <label>
+              URL de monitoramento
+              <input type="text" name="monitor_url" value="https://agendeam.com.br/ujf/motorista.php" />
+            </label>
+            <label>
+              Transportadora alvo
+              <input type="text" name="target_carrier" value="TRANSPORTADORA SEIS" />
+            </label>
+            <label>
+              Volume alerta (0-1)
+              <input type="number" name="alert_volume" min="0" max="1" step="0.1" value="1" />
+            </label>
+            <button class="button" type="submit">Salvar</button>
+            <span id="settings-status"></span>
+          </form>
+        </div>
+        <div class="panel">
+          <h3>Saúde do monitoramento</h3>
+          <ul id="health-list" class="event-list"></ul>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div id="alert-modal" class="modal hidden">
+    <div class="modal-content">
+      <h2>ALERTA CRÍTICO</h2>
+      <p id="alert-message">Transportadora SEIS foi chamada.</p>
+      <button id="confirm-alert" class="button">CONFIRMAR</button>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
